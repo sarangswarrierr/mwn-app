@@ -1,0 +1,17 @@
+{
+  "appId": "com.sarangswarrierr.mwn",
+  "appName": "MWN",
+  "webDir": "web",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#07090F"
+  },
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": false
+    }
+  }
+}

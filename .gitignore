@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+
+# The Android SDK is installed outside the project, not inside it. It is 550MB
+# of platform images and build tools that every machine downloads for itself,
+# and its location lives in android/local.properties, which is below.
+android-sdk/
+
+# Capacitor copies web/ into the native project on every sync. The copy is
+# derived and would double the repository; web/ itself is tracked.
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+
+# Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/captures/
+android/.idea/
+android/capacitor-cordova-android-plugins/
+
+# Machine-specific: points at the local SDK, so it must never be shared.
+android/local.properties
+
+# Icons and splash are generated from the web app's logo by `npm run assets`.
+# Regenerate rather than commit, so they cannot drift from the source.
+assets/
+
+# Signing material. Losing a keystore means you can never update the app under
+# the same Play listing, so these must never be committed.
+*.jks
+*.keystore
+keystore.properties
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# Editor and OS cruft
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+
+# Vercel
+.vercel

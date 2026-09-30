@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MWN</string>
+    <string name="title_activity_main">MWN</string>
+    <string name="package_name">com.sarangswarrierr.mwn</string>
+    <string name="custom_url_scheme">com.sarangswarrierr.mwn</string>
+</resources>

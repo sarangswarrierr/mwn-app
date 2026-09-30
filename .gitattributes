@@ -1,0 +1,47 @@
+# Normalise line endings: commit LF, check out LF.
+#
+# Without this, a Windows checkout with core.autocrlf=true rewrites LF as CRLF
+# on the way out. That is harmless for Gradle but not for web/, which is a
+# committed build artifact of the web app: rewriting the JS and CSS there
+# produces a dirty tree immediately after a fresh clone, and the diff is
+# unreviewable.
+* text=auto eol=lf
+
+# The JVM and the Android toolchain are happiest with LF, and gradlew must not
+# acquire a line-ending problem.
+android/** text eol=lf
+gradlew text eol=lf
+*.gradle text eol=lf
+*.java text eol=lf
+*.xml text eol=lf
+*.kt text eol=lf
+*.pro text eol=lf
+*.json text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+# Binaries, LAST, because in .gitattributes the last matching rule wins. Every
+# rule above is a prefix match that would otherwise claim the files below. A
+# text conversion on a poster JPEG or a PNG is silent corruption that only
+# surfaces much later as a broken image, and a corrupt .jar fails the build with
+# an unrelated-looking error.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.mp4 binary
+*.jar binary
+*.aar binary
+*.so binary
+*.keystore binary
+*.jks binary
+
+# The Gradle wrapper jar is committed on purpose: it is how a fresh clone gets
+# a known-good Gradle, and gradle-wrapper.properties carries the SHA256 it gets
+# checked against. Binary so nothing rewrites it.
+gradle-wrapper.jar binary

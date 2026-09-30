@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover lets the page paint under the status bar and notch so
+         the safe-area insets in theme.css can pad content back out of them. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Track your Marvel Cinematic Universe catch-up progress and rate every title." />
+    <!-- No-flash boot: apply the saved theme, background and effects before
+         first paint. Mirrors src/lib/uiStore.js / src/lib/useTheme.js; the
+         checks in scripts/check-theme.mjs fail the build if this drifts. -->
+    <script>
+      (function () {
+        var d = document.documentElement;
+        function get(k) {
+          try { return localStorage.getItem(k); } catch (e) { return null; }
+        }
+        var theme = get("mcu_theme") || "avengers";
+        var bg = null;
+        try { bg = JSON.parse(get("mcu_bg")); } catch (e) {}
+        if (!bg || typeof bg !== "object") bg = {};
+        var type = bg.type === "url" || bg.type === "image" ? bg.type : "scene";
+        var ref = typeof bg.ref === "string" ? bg.ref : null;
+        var overlay = Number(bg.overlay);
+        if (!(overlay >= 0)) overlay = 55;
+        var blur = Number(bg.blur);
+        if (!(blur >= 0)) blur = 0;
+        var fit = bg.fit === "contain" || bg.fit === "tile" ? bg.fit : "cover";
+        var fx = get("mcu_fx") === "1";
+        d.dataset.theme = theme;
+        d.dataset.scene = type === "scene" ? ref || theme : theme;
+        d.dataset.hasImage = type === "scene" ? "0" : "1";
+        d.dataset.fit = fit;
+        d.dataset.fixed = bg.fixed === false ? "0" : "1";
+        d.dataset.tint = bg.tint === true ? "1" : "0";
+        d.dataset.fx = fx ? "off" : "on";
+        d.style.setProperty("--bg-blur", Math.min(blur, 20) + "px");
+        // Image mode floors the scrim (0.78/0.86) so muted copy clears 4.5:1
+        // over any upload, even a white one; scenes are dark by design and get
+        // a lighter scrim so the art stays visible.
+        if (type === "scene") {
+          d.style.setProperty("--scrim-a", (0.3 + overlay * 0.0055).toFixed(3));
+          d.style.setProperty("--scrim-b", (0.55 + overlay * 0.004).toFixed(3));
+        } else {
+          d.style.setProperty("--scrim-a", (0.78 + overlay * 0.00133).toFixed(3));
+          d.style.setProperty("--scrim-b", (0.86 + overlay * 0.001).toFixed(3));
+        }
+        // Uploaded images live in IndexedDB and cannot be read synchronously
+        // here; the theme's scene shows until useTheme swaps the blob in. A
+        // saved URL is applied straight away and reverted on load failure.
+        if (type === "url" && /^https?:\/\//i.test(ref)) {
+          d.style.setProperty("--bg-image", 'url("' + ref.replace(/["\\]/g, "") + '")');
+        }
+      })();
+    </script>
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bangers&family=Bebas+Neue&family=Cinzel:wght@400..900&family=Orbitron:wght@400..900&display=swap"
+    />
+    <title>MCW</title>
+    <script type="module" crossorigin src="/assets/index-vCSyx3kB.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Dl0JxUgs.css">
+  </head>
+  <body>
+    <!-- Fixed, GPU-friendly background layer; never repaints the poster grid. -->
+    <div id="bg" class="bg-layer" aria-hidden="true">
+      <div class="bg-art"></div>
+      <div class="bg-tint"></div>
+      <div class="bg-fx"></div>
+      <div class="bg-scrim"></div>
+    </div>
+    <div id="root"></div>
+  </body>
+</html>
