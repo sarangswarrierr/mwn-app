@@ -6,6 +6,8 @@
   "description": "The MWN Android app. A Capacitor shell around the built web app in web/; the web app's source is a separate repository.",
   "scripts": {
     "verify:keystore": "node scripts/verify-keystore.mjs",
+    "verify:keystore:tty": "node scripts/verify-keystore-tty.mjs",
+    "verify:tools": "node scripts/verify-keystore.mjs && node scripts/verify-keystore-tty.mjs",
     "bundle": "node scripts/bundle.mjs",
     "version": "node scripts/version.mjs",
     "keystore": "node scripts/make-keystore.mjs",

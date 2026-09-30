@@ -44,22 +44,35 @@ const keytool = jdk.bin === "from PATH" ? `keytool${process.platform === "win32"
 // gone past. A fresh interface per prompt does not help either — readline closes
 // stdin as it shuts down. Either way the script could only ever be run by hand.
 //
-// So: one listener on stdin for the whole run, lines split out of it as they
-// arrive and queued. A prompt takes from the queue, or waits on it if the input
-// has not come yet. Nothing is registered late, so nothing is missed.
+// So on a pipe: one listener for the whole run, lines split out as they arrive
+// and queued, and a prompt takes from the queue or waits on it. Nothing is
+// registered late, so nothing is missed.
 //
-// On a TTY, reading the password means suppressing echo so it never lands on
-// screen in a screenshot or a screen share. That needs setRawMode, which does
-// not exist off a terminal, so the two cases are separate paths.
+// On a terminal the queue is not used at all, and that is the important half of
+// this. A TTY is a byte stream, not a stream of lines: there is no line until
+// the user presses Enter, and setRawMode turns off the terminal's own line
+// buffering so echo can be suppressed. If the queue listener were also attached,
+// it would see every keystroke of the password — arriving in the same chunks,
+// with no newline between them — and hold them in `buffer`. The next prompt
+// would then read the password out of that buffer instead of what the user
+// typed, which is how the password ended up being used as the certificate
+// subject. So: a TTY gets exactly one listener at a time, attached by whoever is
+// currently prompting, and no shared buffer.
+//
+// Echo suppression needs setRawMode, which does not exist off a terminal, hence
+// the two paths.
 
-// Completed lines waiting for a prompt, and prompts waiting for a line.
+// --- the pipe path: queue completed lines, and hand them to whoever asks ------
+//
+// Only attached when stdin is not a terminal. See the note above readLine: on a
+// TTY this must not exist, or it would compete with the prompt's own listener.
 const queue = [];
 const waiting = [];
 let buffer = "";
 
-// Splits whatever has arrived so far into lines. A partial trailing line stays
-// in `buffer` until the rest of it turns up, so a value split across two chunks
-// is still read as one line.
+// Splits whatever has arrived so far into lines. A partial trailing line stays in
+// `buffer` until the rest of it turns up, so a value split across two chunks is
+// still read as one line.
 const drain = () => {
   let at;
   while ((at = buffer.indexOf("\n")) !== -1) {
@@ -70,12 +83,14 @@ const drain = () => {
   }
 };
 
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  buffer += chunk;
-  drain();
-});
-process.stdin.resume();
+if (!process.stdin.isTTY) {
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    buffer += chunk;
+    drain();
+  });
+  process.stdin.resume();
+}
 
 const nextLine = () =>
   new Promise((resolve) => {
@@ -83,41 +98,92 @@ const nextLine = () =>
     waiting.push(resolve);
   });
 
-const ask = async (prompt) => {
+// Reads one line from a terminal, with `echo` deciding whether it is typed back
+// out. setRawMode stops the terminal buffering the line itself, which is what
+// makes suppressing echo possible; backspace then has to be applied by hand for
+// the same reason.
+//
+// Exactly one of these listeners exists at a time. That is the whole point: a
+// second one would see the same keystrokes, and a shared listener would hand the
+// next prompt the previous prompt's characters.
+// Set by a CR so the LF of the same CRLF pair is dropped. Module-level because
+// the LF arrives after the prompt that produced the CR has already resolved —
+// that is the whole point, and a per-prompt variable would go out of scope first.
+let skipNewline = false;
+
+const readLine = (prompt, { echo }) => {
   process.stdout.write(prompt);
-  return (await nextLine()).trim();
-};
 
-const readSecret = (prompt) => {
-  // No terminal, so there is nothing to leak into and setRawMode is absent.
-  if (!process.stdin.isTTY) return ask(prompt);
+  if (!process.stdin.isTTY) return nextLine().then((l) => l.trim());
 
-  return new Promise((resolve, reject) => {
-    process.stdout.write(prompt);
+  return new Promise((resolve) => {
     const stdin = process.stdin;
-    const wasRaw = stdin.isRaw;
     stdin.setRawMode(true);
     let value = "";
-    const finish = (fn, arg) => {
-      stdin.removeListener("data", onSecret);
-      stdin.setRawMode(wasRaw ?? false);
+    // Set when a keystroke ends the line, so a chunk carrying more characters
+    // stops being applied once the line is done.
+    let finished = 0;
+
+    const finish = (arg) => {
+      if (finished) return;
+      finished++;
+      stdin.removeListener("data", onData);
+      stdin.setRawMode(false);
       process.stdout.write("\n");
-      fn(arg);
+      resolve(arg);
     };
-    const onSecret = (c) => {
-      const ch = c.toString("utf8");
-      if (ch === "\r" || ch === "\n" || ch === "\u0004") return finish(resolve, value);
-      // Backspace: the DEL most terminals send, and the older BS.
+
+    // Handles one character. A terminal delivers a *stream* of keystrokes and
+    // Node hands them over in whatever chunks the OS produced, so a chunk is
+    // routinely more than one character — Enter on Windows is "\r\n" in a single
+    // read. Testing the chunk as a whole is why that pair would be typed into the
+    // value instead of ending the line.
+    const handle = (ch) => {
+      if (ch === "\r") {
+        // Enter is CRLF on Windows. The CR ends the line; the LF that follows is
+        // still in stdin and would otherwise complete the *next* prompt with an
+        // empty answer, so pressing Enter for a default silently skips a prompt.
+        // Swallow exactly one trailing newline and nothing else — an earlier
+        // attempt dropped every leading newline instead, which meant pressing
+        // Enter at an empty prompt never resolved at all.
+        skipNewline = true;
+        return finish(value.trim());
+      }
+      if (ch === "\n") {
+        // The LF half of a CR that was already handled. Bare LF (a Unix
+        // terminal) ends the line normally.
+        if (skipNewline) return;
+        return finish(value.trim());
+      }
+      if (ch === "\u0004") return finish(value.trim()); // Ctrl-D
       if (ch === "\u007f" || ch === "\b") {
         value = value.slice(0, -1);
+        if (echo) process.stdout.write("\b \b");
         return;
       }
-      if (ch === "\u0003") return finish(reject, new Error("cancelled"));
+      if (ch === "\u0003") return finish(""); // Ctrl-C: give up on the value
+      // Escape, and the two bytes application-mode cursor keys arrive as.
+      if (ch === "\u001b" || ch === "+" || ch === "e" || ch === "[") return;
       value += ch;
+      if (echo) process.stdout.write(ch);
     };
-    stdin.on("data", onSecret);
+
+    const onData = (chunk) => {
+      // Stop at the character that ended the line; the rest belongs to no prompt.
+      const text = chunk.toString("utf8");
+      for (let i = 0; i < text.length && !finished; i++) handle(text[i]);
+    };
+    stdin.on("data", onData);
+    stdin.resume();
   });
 };
+
+const ask = (prompt) => readLine(prompt, { echo: true });
+
+// A password is never echoed, so it cannot end up in a screenshot or a screen
+// share. keytool then receives it over an environment variable, so it is not in
+// argv either.
+const readSecret = (prompt) => readLine(prompt, { echo: false });
 
 if (existsSync(keystore)) {
   console.error(
