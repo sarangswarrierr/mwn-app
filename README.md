@@ -114,6 +114,71 @@ browser, so the same source runs in both places with no build flag.
 - **Safe areas.** `viewport-fit=cover` plus the `--safe-*` variables in the web
   app's `theme.css`.
 
+## Signing
+
+```bash
+npm run keystore
+```
+
+Generates `android/mwn-upload.jks` — Play's *upload key*, the one you keep —
+plus `android/keystore.properties`, and prints the SHA-256 fingerprint that Play
+Console asks for. Both are gitignored. The password is prompted for with echo
+off and handed to keytool through an environment variable, so it appears neither
+on screen nor in a process list.
+
+Validity is 27 years, past Google's October 2033 requirement. **Back the `.jks`
+up somewhere durable.** Because Play App Signing keeps the *app signing* key
+itself, a lost upload key is recoverable through Play Console — but it costs a
+form and a wait, and you cannot upload in the meantime.
+
+`npm run verify:keystore` exercises the whole flow with a throwaway password and
+deletes what it makes, so it can be tested after a change or on a new machine
+without committing to a password.
+
+### If keytool cannot be found
+
+`scripts/find-tools.mjs` probes for a real `keytool` executable rather than
+trusting `JAVA_HOME`, and falls back to the conventional install roots. This
+matters because a terminal opened *before* the JDK was installed keeps the
+environment it launched with, so `JAVA_HOME` is empty and `keytool` is not on
+`PATH` in that one window while the same command works in a new one. When
+nothing is found, the error lists every path that was tried.
+`install-device.mjs` resolves the SDK the same way.
+
+## Sharing a build without the Play Store
+
+```bash
+npm run apk:release
+```
+
+`android/app/build/outputs/apk/release/app-release.apk`, around 4 MB, signed
+with the real key. Note that `npm run release` builds an **AAB**, which only
+Play Console accepts — nobody can install an AAB directly, so use `apk:release`
+for this.
+
+Send the file however you like: Drive, Telegram, email. Each recipient installs
+it from whatever app they downloaded it with and allows that app to "Install
+unknown apps" once. Android warns on sideloaded apps; that is the platform, not
+a defect. **Requires Android 7.0 or newer** (minSdk 24).
+
+Two things worth knowing before the first person tries:
+
+- **A device that already has the debug-signed build must uninstall first.**
+  Android refuses to replace an app whose signature changed, and the resulting
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE` reads like a broken file rather than a
+  signature mismatch. Everyone who installs the real key from here on can
+  receive future updates in place.
+- **The TMDB key is inside the APK.** The app calls TMDB directly, so the key
+  ships with it and anyone who unzips the APK can read it. The same trade the
+  web build already makes, and fine for a handful of people you know — but
+  rotate the key in TMDB and rebuild if this goes wider than people you would
+  hand a password to.
+
+For a stable link rather than a file, Firebase App Distribution does this free
+for up to 100 testers and never creates a Play listing. It re-signs uploads with
+its own test certificate, so anyone already on your key would have to uninstall
+first — worth doing now rather than later if you want it.
+
 ## Publishing to Google Play
 
 ### One-time setup
@@ -122,17 +187,10 @@ browser, so the same source runs in both places with no build flag.
 [play.google.com/console](https://play.google.com/console). Verification by
 email; a personal account is instant.
 
-**2. The upload key.** This is the key you keep; Google holds a second key that
-signs what users actually install.
-
-```bash
-npm run keystore    # prompts for a password, writes android/mwn-upload.jks + keystore.properties
-```
-
-It prints the certificate's SHA-256 fingerprint, which is what you paste into
-Play Console. **Back the `.jks` up somewhere durable.** Because Play App Signing
-separates the two keys, a lost *upload* key is recoverable through Play Console
-— but it costs a form and a wait, and you cannot upload in the meantime.
+**2. The upload key**, from `npm run keystore` above. Create the app in Play
+Console (All apps → Create app): name, language, Free, and the declarations.
+Once the app exists, upload your first bundle to the internal track; Play shows
+the app signing setup then, and you can leave Play to generate the signing key.
 
 **3. Create the app in Play Console** (All apps → Create app). Name, language,
 Free, and the declarations. Once the app exists, upload your first bundle to

@@ -10,8 +10,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, writeFileSync, copyFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { findJdkBin, notFound } from "./find-tools.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const androidDir = join(root, "android");
@@ -24,51 +24,100 @@ const ALIAS = "mwn";
 // October 2033, and a key that expires stops users upgrading to new versions.
 const VALIDITY_DAYS = 10000;
 
-const javaHome = process.env.JAVA_HOME;
-const keytool = javaHome
-  ? join(javaHome, "bin", process.platform === "win32" ? "keytool.exe" : "keytool")
-  : "keytool";
+// Probed for rather than read from JAVA_HOME: a terminal opened before the JDK
+// was installed has an empty JAVA_HOME and a PATH without it, and would
+// otherwise fail here while the identical command worked in a new window.
+const jdk = findJdkBin();
+if (jdk.error) {
+  console.error(notFound("keytool (a JDK is needed to sign the app)", jdk.error));
+  process.exit(1);
+}
+const keytool = jdk.bin === "from PATH" ? `keytool${process.platform === "win32" ? ".exe" : ""}` : join(jdk.bin, `keytool${process.platform === "win32" ? ".exe" : ""}`);
 
-const ask = (q) =>
+// One line-reading implementation for the whole script, used for both the
+// password and the certificate name.
+//
+// A readline interface is the obvious choice and the wrong one here. Piped input
+// arrives in a single chunk, so readline emits every line at once; the first
+// prompt consumes the first and the rest are emitted before the next question is
+// registered, so the second prompt waits forever for a line that has already
+// gone past. A fresh interface per prompt does not help either — readline closes
+// stdin as it shuts down. Either way the script could only ever be run by hand.
+//
+// So: one listener on stdin for the whole run, lines split out of it as they
+// arrive and queued. A prompt takes from the queue, or waits on it if the input
+// has not come yet. Nothing is registered late, so nothing is missed.
+//
+// On a TTY, reading the password means suppressing echo so it never lands on
+// screen in a screenshot or a screen share. That needs setRawMode, which does
+// not exist off a terminal, so the two cases are separate paths.
+
+// Completed lines waiting for a prompt, and prompts waiting for a line.
+const queue = [];
+const waiting = [];
+let buffer = "";
+
+// Splits whatever has arrived so far into lines. A partial trailing line stays
+// in `buffer` until the rest of it turns up, so a value split across two chunks
+// is still read as one line.
+const drain = () => {
+  let at;
+  while ((at = buffer.indexOf("\n")) !== -1) {
+    const line = buffer.slice(0, at).replace(/\r$/, "");
+    buffer = buffer.slice(at + 1);
+    if (waiting.length) waiting.shift()(line);
+    else queue.push(line);
+  }
+};
+
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  drain();
+});
+process.stdin.resume();
+
+const nextLine = () =>
   new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    rl.question(q, (a) => {
-      rl.close();
-      resolve(a.trim());
-    });
+    if (queue.length) return resolve(queue.shift());
+    waiting.push(resolve);
   });
 
-// Echoing a password back to the screen is how it ends up in a screenshot or a
-// screen share. keytool reads it from stdin without echoing when both prompts
-// are -storepass:stdin, so the value never appears on screen or in argv.
-const readSecret = (prompt) =>
-  new Promise((resolve, reject) => {
+const ask = async (prompt) => {
+  process.stdout.write(prompt);
+  return (await nextLine()).trim();
+};
+
+const readSecret = (prompt) => {
+  // No terminal, so there is nothing to leak into and setRawMode is absent.
+  if (!process.stdin.isTTY) return ask(prompt);
+
+  return new Promise((resolve, reject) => {
     process.stdout.write(prompt);
     const stdin = process.stdin;
     const wasRaw = stdin.isRaw;
-    stdin.setRawMode?.(true);
-    stdin.resume();
+    stdin.setRawMode(true);
     let value = "";
-    const onData = (c) => {
+    const finish = (fn, arg) => {
+      stdin.removeListener("data", onSecret);
+      stdin.setRawMode(wasRaw ?? false);
+      process.stdout.write("\n");
+      fn(arg);
+    };
+    const onSecret = (c) => {
       const ch = c.toString("utf8");
-      if (ch === "\r" || ch === "\n" || ch === "\u0004") {
-        stdin.pause();
-        stdin.removeListener("data", onData);
-        stdin.setRawMode?.(wasRaw ?? false);
-        process.stdout.write("\n");
-        resolve(value);
-        return;
-      }
-      // Backspace
+      if (ch === "\r" || ch === "\n" || ch === "\u0004") return finish(resolve, value);
+      // Backspace: the DEL most terminals send, and the older BS.
       if (ch === "\u007f" || ch === "\b") {
         value = value.slice(0, -1);
         return;
       }
-      if (ch === "\u0003") reject(new Error("cancelled"));
+      if (ch === "\u0003") return finish(reject, new Error("cancelled"));
       value += ch;
     };
-    stdin.on("data", onData);
+    stdin.on("data", onSecret);
   });
+};
 
 if (existsSync(keystore)) {
   console.error(
@@ -99,6 +148,11 @@ if (password !== confirm) {
 const dname = await ask('Certificate name [CN=MWN, OU=Personal, O=MWN, L=, S=, C=IN]: ');
 const name = dname || "CN=MWN, OU=Personal, O=MWN, C=IN";
 
+// keytool has no -storepass:stdin — that option does not exist, and passing it
+// makes keytool exit with "Unknown password type: stdin". It does accept
+// :env, which keeps the password out of argv: a process list shows the variable
+// name, not its value, and the child inherits it directly.
+const PW_VAR = "MWN_KEYSTORE_PASSWORD";
 const result = spawnSync(
   keytool,
   [
@@ -110,14 +164,29 @@ const result = spawnSync(
     "-keysize", "2048",
     "-validity", String(VALIDITY_DAYS),
     "-dname", name,
-    "-storepass:stdin",
-    "-keypass:stdin",
+    `-storepass:env`, PW_VAR,
+    `-keypass:env`, PW_VAR,
   ],
-  { input: `${password}\n${password}\n`, stdio: ["pipe", "inherit", "inherit"] },
+  {
+    // Only this child sees it, and only for as long as it runs.
+    env: { ...process.env, [PW_VAR]: password },
+    stdio: ["ignore", "inherit", "inherit"],
+  },
 );
 
 if (result.status !== 0) {
-  console.error("keytool failed. Is JAVA_HOME set and pointing at a JDK?");
+  // result.error means the process never started; a non-zero status means
+  // keytool ran and rejected the request. Those need different advice, and
+  // conflating them is what made the original failure misleading.
+  if (result.error) {
+    console.error(`Could not run ${keytool}: ${result.error.code || result.error.message}`);
+  } else {
+    console.error(
+      `keytool exited with status ${result.status}. Its own message is above.\n` +
+        `If it complained about the password, the two entries did not match — ` +
+        `and note that a minimum of 6 characters is required.`,
+    );
+  }
   process.exit(result.status ?? 1);
 }
 
@@ -153,8 +222,8 @@ The certificate SHA-256 fingerprint, which is what you paste into Play Console:
 
 const fp = spawnSync(
   keytool,
-  ["-list", "-v", "-keystore", keystore, "-alias", ALIAS, "-storepass:stdin"],
-  { input: `${password}\n`, encoding: "utf8" },
+  ["-list", "-v", "-keystore", keystore, "-alias", ALIAS, `-storepass:env`, PW_VAR],
+  { env: { ...process.env, [PW_VAR]: password }, encoding: "utf8" },
 );
 const line = (fp.stdout || "").split("\n").find((l) => l.includes("SHA256:"));
 console.log(line ? line.trim() : "(run keytool -list -v to print it)");

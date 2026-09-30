@@ -9,28 +9,23 @@ import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { findAndroidSdk, notFound } from "./find-tools.mjs";
 
 const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const apk = join(root, "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk");
 
-const sdk =
-  process.env.ANDROID_HOME ||
-  process.env.ANDROID_SDK_ROOT ||
-  join(join(root, ".."), "android-sdk");
-
-const adb = join(sdk, "platform-tools", process.platform === "win32" ? "adb.exe" : "adb");
-
-if (!existsSync(apk)) {
-  console.error(`No APK at ${apk}\nRun: npm run apk`);
+// Probed for rather than read from ANDROID_HOME, for the same reason keytool is:
+// a terminal opened before the SDK was installed still has the old environment.
+const found = findAndroidSdk();
+if (found.error) {
+  console.error(notFound("adb (the Android SDK is needed to install)", found.error));
   process.exit(1);
 }
 
-if (!existsSync(adb)) {
-  console.error(
-    `adb not found at ${adb}\n` +
-      `Set ANDROID_HOME to your Android SDK, or re-run sdkmanager from` +
-      ` ${join(sdk, "cmdline-tools", "latest", "bin")}`,
-  );
+const adb = join(found.sdk, "platform-tools", process.platform === "win32" ? "adb.exe" : "adb");
+
+if (!existsSync(apk)) {
+  console.error(`No APK at ${apk}\nRun: npm run apk`);
   process.exit(1);
 }
 
