@@ -19,38 +19,26 @@
         var bg = null;
         try { bg = JSON.parse(get("mcu_bg")); } catch (e) {}
         if (!bg || typeof bg !== "object") bg = {};
-        var type = bg.type === "url" || bg.type === "image" ? bg.type : "scene";
+        // The backdrop is always a generated scene: `ref` is a theme id that
+        // pins one, or null to follow the active theme. Anything else — a URL,
+        // a number, a leftover value from the old image option — falls back to
+        // following the theme, so no stored state can produce a blank page.
         var ref = typeof bg.ref === "string" ? bg.ref : null;
         var overlay = Number(bg.overlay);
         if (!(overlay >= 0)) overlay = 55;
         var blur = Number(bg.blur);
         if (!(blur >= 0)) blur = 0;
-        var fit = bg.fit === "contain" || bg.fit === "tile" ? bg.fit : "cover";
         var fx = get("mcu_fx") === "1";
         d.dataset.theme = theme;
-        d.dataset.scene = type === "scene" ? ref || theme : theme;
-        d.dataset.hasImage = type === "scene" ? "0" : "1";
-        d.dataset.fit = fit;
+        d.dataset.scene = ref || theme;
         d.dataset.fixed = bg.fixed === false ? "0" : "1";
         d.dataset.tint = bg.tint === true ? "1" : "0";
         d.dataset.fx = fx ? "off" : "on";
         d.style.setProperty("--bg-blur", Math.min(blur, 20) + "px");
-        // Image mode floors the scrim (0.78/0.86) so muted copy clears 4.5:1
-        // over any upload, even a white one; scenes are dark by design and get
-        // a lighter scrim so the art stays visible.
-        if (type === "scene") {
-          d.style.setProperty("--scrim-a", (0.3 + overlay * 0.0055).toFixed(3));
-          d.style.setProperty("--scrim-b", (0.55 + overlay * 0.004).toFixed(3));
-        } else {
-          d.style.setProperty("--scrim-a", (0.78 + overlay * 0.00133).toFixed(3));
-          d.style.setProperty("--scrim-b", (0.86 + overlay * 0.001).toFixed(3));
-        }
-        // Uploaded images live in IndexedDB and cannot be read synchronously
-        // here; the theme's scene shows until useTheme swaps the blob in. A
-        // saved URL is applied straight away and reverted on load failure.
-        if (type === "url" && /^https?:\/\//i.test(ref)) {
-          d.style.setProperty("--bg-image", 'url("' + ref.replace(/["\\]/g, "") + '")');
-        }
+        // Scenes are dark by design, so this scrim is tuned to keep the art
+        // visible without lifting copy off its background.
+        d.style.setProperty("--scrim-a", (0.3 + overlay * 0.0055).toFixed(3));
+        d.style.setProperty("--scrim-b", (0.55 + overlay * 0.004).toFixed(3));
       })();
     </script>
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
@@ -63,8 +51,8 @@
       href="https://fonts.googleapis.com/css2?family=Bangers&family=Bebas+Neue&family=Cinzel:wght@400..900&family=Orbitron:wght@400..900&display=swap"
     />
     <title>MCW</title>
-    <script type="module" crossorigin src="/assets/index-vCSyx3kB.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Dl0JxUgs.css">
+    <script type="module" crossorigin src="/assets/index-BGBiFALK.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BBstxT69.css">
   </head>
   <body>
     <!-- Fixed, GPU-friendly background layer; never repaints the poster grid. -->
@@ -74,6 +62,6 @@
       <div class="bg-fx"></div>
       <div class="bg-scrim"></div>
     </div>
-    <div id="root"></div>
+    <div id="root"></div>
   </body>
 </html>

@@ -25,7 +25,11 @@ android/local.properties
 
 # Icons and splash are generated from the web app's logo by `npm run assets`.
 # Regenerate rather than commit, so they cannot drift from the source.
-assets/
+#
+# Anchored to the project root. A bare `assets/` also matches web/assets/, which
+# is where the app's own JS and CSS live — committing the shell without them
+# produces a repository that builds an APK which then shows a blank page.
+/assets/
 
 # Signing material. Losing a keystore means you can never update the app under
 # the same Play listing, so these must never be committed.
