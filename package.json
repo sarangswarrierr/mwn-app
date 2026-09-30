@@ -6,9 +6,12 @@
   "description": "The MWN Android app. A Capacitor shell around the built web app in web/; the web app's source is a separate repository.",
   "scripts": {
     "bundle": "node scripts/bundle.mjs",
+    "version": "node scripts/version.mjs",
+    "keystore": "node scripts/make-keystore.mjs",
     "sync": "cap sync android",
     "open": "cap open android",
     "apk": "cap sync android && cd android && gradlew.bat assembleDebug",
+    "release": "cap sync android && cd android && gradlew.bat bundleRelease",
     "apk:release": "cap sync android && cd android && gradlew.bat assembleRelease",
     "run:android": "cap sync android && cap run android",
     "assets": "npx @capacitor/assets generate && node scripts/icon-background.mjs",

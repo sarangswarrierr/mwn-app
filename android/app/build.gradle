@@ -1,5 +1,35 @@
 apply plugin: 'com.android.application'
 
+// --- version -----------------------------------------------------------------
+//
+// Read from android/version.properties, which `npm run version` bumps. Hard-coded
+// versionCode in defaultConfig is how releases get uploaded twice and rejected:
+// Play requires a strict increase, and the number that matters is the one in the
+// bundle, not the one you remember editing.
+def versionPropsFile = rootProject.file('version.properties')
+def versionProps = new Properties()
+if (versionPropsFile.exists()) {
+    versionPropsFile.withInputStream { versionProps.load(it) }
+} else {
+    throw new GradleException(
+        "Missing ${versionPropsFile}. It holds versionCode and versionName; " +
+        "run `npm run version -- patch` to create it."
+    )
+}
+
+// --- signing -----------------------------------------------------------------
+//
+// Optional on purpose. A missing keystore falls back to the debug key so that
+// `npm run apk` and a fresh clone's first build both work with no setup. Only
+// the release build needs the real thing, and it says so loudly rather than
+// quietly producing an unsigned bundle.
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+def keystoreProperties = new Properties()
+def hasKeystore = keystorePropertiesFile.exists()
+if (hasKeystore) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+
 android {
     namespace = "com.sarangswarrierr.mwn"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +37,8 @@ android {
         applicationId "com.sarangswarrierr.mwn"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode Integer.parseInt(versionProps['versionCode'])
+        versionName versionProps['versionName']
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,11 +46,48 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    signingConfigs {
+        if (hasKeystore) {
+            release {
+                storeFile rootProject.file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (hasKeystore) {
+                signingConfig signingConfigs.release
+            } else {
+                // Not an error: the fallback keeps a fresh clone buildable. But a
+                // bundle signed with the debug key is rejected by Play, so make the
+                // substitution obvious in the build log.
+                logger.warn("""
+
+    ###########################################################################
+    # No android/keystore.properties found — signing the release build with  #
+    # the DEBUG key. Play Console will reject this. Run:                     #
+    #     npm run keystore                                                      #
+    ###########################################################################
+""")
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+    }
+
+    // Play splits the bundle per device configuration, so a user downloads only
+    // the ABIs and densities they need. Both densities matter here: the launcher
+    // icon is served from the xxxhdpi mipmap on most phones, and the splash is
+    // orientation-specific.
+    bundle {
+        language { enableSplit = true }
+        density { enableSplit = true }
+        abi { enableSplit = true }
     }
 }
 

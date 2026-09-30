@@ -114,16 +114,98 @@ browser, so the same source runs in both places with no build flag.
 - **Safe areas.** `viewport-fit=cover` plus the `--safe-*` variables in the web
   app's `theme.css`.
 
-## Release signing
+## Publishing to Google Play
 
-Not set up yet. The debug APK is signed with an auto-generated key, which is
-fine for sideloading and useless for Play.
+### One-time setup
+
+**1. A Play developer account.** $25 one-off, at
+[play.google.com/console](https://play.google.com/console). Verification by
+email; a personal account is instant.
+
+**2. The upload key.** This is the key you keep; Google holds a second key that
+signs what users actually install.
 
 ```bash
-keytool -genkey -v -keystore mwn-upload.jks -keyalg RSA -keysize 2048 \
-  -validity 10000 -alias mwn
+npm run keystore    # prompts for a password, writes android/mwn-upload.jks + keystore.properties
 ```
 
-Then add a `signingConfigs.release` block to `android/app/build.gradle`. Keep
-the `.jks` out of git and store it somewhere you will not lose it — Play ties
-the listing to that key for the lifetime of the app.
+It prints the certificate's SHA-256 fingerprint, which is what you paste into
+Play Console. **Back the `.jks` up somewhere durable.** Because Play App Signing
+separates the two keys, a lost *upload* key is recoverable through Play Console
+— but it costs a form and a wait, and you cannot upload in the meantime.
+
+**3. Create the app in Play Console** (All apps → Create app). Name, language,
+Free, and the declarations. Once the app exists, upload your first bundle to
+the internal track; Play shows the app signing setup then, and you can leave
+Play to generate the signing key.
+
+### Uploading
+
+```bash
+npm run version -- patch     # 1.0.0 -> 1.0.1, versionCode 1 -> 2
+npm run bundle               # refresh web/ from the web app
+npm run release              # -> android/app/build/outputs/bundle/release/app-release.aab
+```
+
+Then Play Console → your app → **Testing → Internal testing → Create new
+release** → upload the `.aab`. (An **app bundle** is required, not an APK —
+Play builds the per-device APKs itself.)
+
+The bundle is currently signed with the debug key, which Play rejects. `npm run
+keystore` fixes that; until you do, `npm run release` prints a warning saying
+so.
+
+### The 12-tester rule
+
+If your Play account is a **personal** one created after 13 November 2023, you
+cannot publish straight to production. You must first run a **closed test**
+with at least **12 testers opted in continuously for 14 days**, then answer
+Play's questionnaire to apply for production access. Plan for 14–17 days, and
+recruit 15–16 testers so one dropout does not push the date out.
+
+A personal account created *before* that date, or an organisation account, is
+exempt. Play Console shows which applies on the app dashboard — trust that over
+any blog.
+
+Internal testing is separate and unlimited (100 testers), so use it freely for
+quick checks; it does not count toward the 12.
+
+## Version updates
+
+Play requires `versionCode` to **strictly increase** with every upload, and
+rejects anything at or below the highest it has already seen. That number lives
+in one place, `android/version.properties`, and `npm run version` is the only
+thing that should change it:
+
+```bash
+npm run version            # show it
+npm run version -- patch   # 1.0.0 -> 1.0.1
+npm run version -- minor   # 1.0.0 -> 1.1.0
+npm run version -- major   # 1.0.0 -> 2.0.0
+npm run version -- 3.2.1   # set exactly
+```
+
+`versionCode` increments on every call, including when you set an explicit
+version name. Re-asking for the version you are already on is a no-op, because
+a `versionCode` is a one-shot resource against Play's ceiling of 2,100,000,000.
+
+### The full loop when the web app changes
+
+```bash
+cd ../MWN && npm run build        # 1. the web app repo
+cd ../mwn-android
+npm run bundle                    # 2. copy the fresh build into web/
+npm run version -- patch          # 3. bump
+npm run release                   # 4. build the bundle
+git add -A && git commit -m "..." # 5. commit web/ and version.properties together
+git push
+```
+
+Then upload the new `.aab` in Play Console. **Commit `web/` and
+`version.properties` in the same commit** — a commit that bumps the version
+without the new bundle produces an identical app under a new number, which Play
+accepts and users see as a pointless update.
+
+Rolling out gradually: in Play Console, Production → the release → Edit →
+rollout percentage. Start at 10% and watch the crash reports before going to
+100%.
